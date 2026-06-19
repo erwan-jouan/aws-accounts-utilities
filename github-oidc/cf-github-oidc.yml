@@ -1,0 +1,78 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  GitHub Actions OIDC provider and IAM role.
+  Deploy to every account that GitHub Actions needs to access
+  (management account first, then each target account).
+
+Parameters:
+
+  GitHubOrg:
+    Type: String
+    Description: GitHub organisation name or username
+
+  GitHubRepo:
+    Type: String
+    Default: '*'
+    Description: >
+      Repository name to restrict the trust to (e.g. aws-accounts-prerequisites).
+      Use * to allow all repositories in the organisation.
+
+  RoleName:
+    Type: String
+    Description: Name of the IAM role created for GitHub Actions
+
+  CreateOIDCProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Set to false if an OIDC provider for token.actions.githubusercontent.com
+      already exists in this account (only one is allowed per account).
+
+Conditions:
+  ShouldCreateOIDCProvider: !Equals [!Ref CreateOIDCProvider, 'true']
+
+Resources:
+
+  GitHubOIDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateOIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS no longer enforces thumbprint validation for token.actions.githubusercontent.com
+      # (Oct 2023) but CloudFormation still requires the field.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  GitHubActionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub 'arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com'
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                'token.actions.githubusercontent.com:aud': sts.amazonaws.com
+              StringLike:
+                # GitHub appends @<org_id> and @<repo_id> to sub claims (OIDC hardening, 2024).
+                # The * after GitHubOrg and GitHubRepo matches both old (repo:org/repo:ref:...)
+                # and new (repo:org@ID/repo@ID:ref:...) formats.
+                'token.actions.githubusercontent.com:sub': !Sub 'repo:${GitHubOrg}*/${GitHubRepo}*:*'
+      # AdministratorAccess is required here because cdk bootstrap creates IAM roles,
+      # S3 buckets, SSM parameters and CloudFormation stacks from scratch.
+      # After bootstrap, deployments should use scoped CDK deploy roles instead.
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AdministratorAccess
+
+Outputs:
+
+  RoleArn:
+    Description: Paste this ARN as the MANAGEMENT_ROLE_ARN or PRODUCTION_ROLE_ARN GitHub secret
+    Value: !GetAtt GitHubActionsRole.Arn

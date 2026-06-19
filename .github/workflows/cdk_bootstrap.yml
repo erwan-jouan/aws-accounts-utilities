@@ -1,0 +1,83 @@
+name: Bootstrap AWS Accounts
+
+# Prerequisite: run `make deploy-oidc` locally before triggering this workflow.
+# That deploys the GitHub OIDC provider + IAM role to both accounts so the
+# jobs below can authenticate without stored credentials.
+on:
+  workflow_dispatch:
+
+env:
+  NODE_VERSION: '22'
+  AUTHORIZED_ACTOR: ${{ secrets.AUTHORIZED_ACTOR }}
+
+jobs:
+
+  bootstrap-management:
+    environment: production
+    name: CDK bootstrap – management
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cdk-common
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check authorized actor
+        if: github.actor != env.AUTHORIZED_ACTOR
+        run: |
+          echo "❌ '${{ github.actor }}' is not authorized to run this workflow."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cdk-common/package-lock.json
+      - run: npm ci
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: CDK bootstrap
+        run: |
+          npx cdk bootstrap aws://${{ secrets.CICD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
+      - name: Deploy cdk-common stack
+        run: npx cdk deploy --require-approval never
+
+  bootstrap-production:
+    environment: production
+    name: CDK bootstrap – production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./cdk-common
+    # Management must be bootstrapped first so the --trust ARN is valid
+    needs: bootstrap-management
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check authorized actor
+        if: github.actor != env.AUTHORIZED_ACTOR
+        run: |
+          echo "❌ '${{ github.actor }}' is not authorized to run this workflow."
+          exit 1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cdk-common/package-lock.json
+      - run: npm ci
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.PROD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: CDK bootstrap (trust management account)
+        run: |
+          npx cdk bootstrap aws://${{ secrets.PROD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }} \
+            --trust ${{ secrets.CICD_ACCOUNT_ID }} \
+            --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
+      - name: Deploy cdk-common stack
+        run: npx cdk deploy --require-approval never
