@@ -21,7 +21,6 @@ import {
   paginateListRoles,
   paginateListGroups,
   paginateListPolicies,
-  paginateListEntitiesForPolicy,
 } from '@aws-sdk/client-iam';
 import {
   RDSClient,
@@ -49,38 +48,35 @@ import {
   ListDistributionsCommand,
 } from '@aws-sdk/client-cloudfront';
 import { Route53Client, paginateListHostedZones } from '@aws-sdk/client-route-53';
+import { STSClient, GetCallerIdentityCommand } from '@aws-sdk/client-sts';
 
 interface Resource {
   service: string;
   type: string;
   region: string;
   id: string;
-  name: string;
-  createdAt?: Date;
-  usedBy: string[];
 }
 
 interface CollectionMeta {
-  lambdaRoles: Map<string, string>;
-  instanceSGIds: Map<string, string[]>;
-  instanceVPCIds: Map<string, string>;
-  instanceSubIds: Map<string, string>;
-  cfS3Buckets: Map<string, string[]>;
+  subnetVpcIds: Map<string, string>;         // subnetId -> vpcId
+  igwVpcIds: Map<string, string>;            // igwId -> vpcId
+  ngwSubnetIds: Map<string, string>;         // ngwId -> subnetId
+  sgVpcIds: Map<string, string>;             // sgId -> vpcId
+  volumeInstanceIds: Map<string, string>;    // volumeId -> instanceId
+  dbInstanceClusterIds: Map<string, string>; // dbInstanceId -> clusterId
+  instanceSubIds: Map<string, string>;       // instanceId -> subnetId
 }
 
 function newMeta(): CollectionMeta {
   return {
-    lambdaRoles: new Map(),
-    instanceSGIds: new Map(),
-    instanceVPCIds: new Map(),
+    subnetVpcIds: new Map(),
+    igwVpcIds: new Map(),
+    ngwSubnetIds: new Map(),
+    sgVpcIds: new Map(),
+    volumeInstanceIds: new Map(),
+    dbInstanceClusterIds: new Map(),
     instanceSubIds: new Map(),
-    cfS3Buckets: new Map(),
   };
-}
-
-function ec2TagName(tags?: { Key?: string; Value?: string }[]): string {
-  if (!tags) return '-';
-  return tags.find(t => t.Key === 'Name')?.Value ?? '-';
 }
 
 function parseFlexTime(s?: string): Date | undefined {
@@ -90,9 +86,15 @@ function parseFlexTime(s?: string): Date | undefined {
   return isNaN(d.getTime()) ? undefined : d;
 }
 
-function fmtDate(d?: Date): string {
-  if (!d) return '-';
-  return d.toISOString().slice(0, 16).replace('T', ' ');
+async function getAccountId(): Promise<string> {
+  const client = new STSClient({ region: 'us-east-1' });
+  try {
+    const result = await client.send(new GetCallerIdentityCommand({}));
+    return result.Account ?? 'unknown';
+  } catch (e) {
+    console.error(`warn: get account ID: ${e}`);
+    return 'unknown';
+  }
 }
 
 async function getRegions(): Promise<string[]> {
@@ -106,6 +108,52 @@ async function getRegions(): Promise<string[]> {
   }
 }
 
+function toArn(r: Resource, accountId: string): string {
+  switch (r.service) {
+    case 'EC2':
+      switch (r.type) {
+        case 'Instance':      return `arn:aws:ec2:${r.region}:${accountId}:instance/${r.id}`;
+        case 'Volume':        return `arn:aws:ec2:${r.region}:${accountId}:volume/${r.id}`;
+        case 'SecurityGroup': return `arn:aws:ec2:${r.region}:${accountId}:security-group/${r.id}`;
+        case 'KeyPair':       return `arn:aws:ec2:${r.region}:${accountId}:key-pair/${r.id}`;
+        case 'Snapshot':      return `arn:aws:ec2:${r.region}:${accountId}:snapshot/${r.id}`;
+        case 'ElasticIP':     return `arn:aws:ec2:${r.region}:${accountId}:elastic-ip/${r.id}`;
+        case 'AMI':           return `arn:aws:ec2:${r.region}:${accountId}:image/${r.id}`;
+        default:              return `arn:aws:ec2:${r.region}:${accountId}:${r.type.toLowerCase()}/${r.id}`;
+      }
+    case 'VPC':
+      switch (r.type) {
+        case 'VPC':             return `arn:aws:ec2:${r.region}:${accountId}:vpc/${r.id}`;
+        case 'Subnet':          return `arn:aws:ec2:${r.region}:${accountId}:subnet/${r.id}`;
+        case 'InternetGateway': return `arn:aws:ec2:${r.region}:${accountId}:internet-gateway/${r.id}`;
+        case 'NatGateway':      return `arn:aws:ec2:${r.region}:${accountId}:natgateway/${r.id}`;
+        default:                return `arn:aws:ec2:${r.region}:${accountId}:${r.type.toLowerCase()}/${r.id}`;
+      }
+    case 'S3':             return `arn:aws:s3:::${r.id}`;
+    case 'IAM':            return r.id; // already an ARN
+    case 'RDS':
+      if (r.type === 'DBCluster') return `arn:aws:rds:${r.region}:${accountId}:cluster:${r.id}`;
+      return `arn:aws:rds:${r.region}:${accountId}:db:${r.id}`;
+    case 'Lambda':         return r.id; // already an ARN
+    case 'DynamoDB':       return `arn:aws:dynamodb:${r.region}:${accountId}:table/${r.id}`;
+    case 'CloudFormation': return r.id; // already an ARN
+    case 'ECS':            return r.id; // already an ARN
+    case 'EKS':            return `arn:aws:eks:${r.region}:${accountId}:cluster/${r.id}`;
+    case 'SNS':            return r.id; // already an ARN
+    case 'SQS': {
+      const parts = r.id.split('/');
+      const queueName = parts[parts.length - 1];
+      return `arn:aws:sqs:${r.region}:${accountId}:${queueName}`;
+    }
+    case 'CloudFront':  return `arn:aws:cloudfront::${accountId}:distribution/${r.id}`;
+    case 'Route53': {
+      const zoneId = r.id.split('/').pop() ?? r.id;
+      return `arn:aws:route53:::hostedzone/${zoneId}`;
+    }
+    default: return r.id;
+  }
+}
+
 async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]> {
   const client = new EC2Client({ region });
   const resources: Resource[] = [];
@@ -115,13 +163,7 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
       for (const reservation of page.Reservations ?? []) {
         for (const instance of reservation.Instances ?? []) {
           const id = instance.InstanceId!;
-          resources.push({
-            service: 'EC2', type: 'Instance', region, id,
-            name: ec2TagName(instance.Tags), createdAt: instance.LaunchTime, usedBy: [],
-          });
-          const sgs = (instance.SecurityGroups ?? []).map(sg => sg.GroupId!).filter(Boolean);
-          if (sgs.length) meta.instanceSGIds.set(id, sgs);
-          if (instance.VpcId) meta.instanceVPCIds.set(id, instance.VpcId);
+          resources.push({ service: 'EC2', type: 'Instance', region, id });
           if (instance.SubnetId) meta.instanceSubIds.set(id, instance.SubnetId);
         }
       }
@@ -131,10 +173,9 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     for await (const page of paginateDescribeVolumes({ client }, {})) {
       for (const vol of page.Volumes ?? []) {
-        resources.push({
-          service: 'EC2', type: 'Volume', region, id: vol.VolumeId!,
-          name: ec2TagName(vol.Tags), createdAt: vol.CreateTime, usedBy: [],
-        });
+        resources.push({ service: 'EC2', type: 'Volume', region, id: vol.VolumeId! });
+        const instanceId = vol.Attachments?.[0]?.InstanceId;
+        if (instanceId) meta.volumeInstanceIds.set(vol.VolumeId!, instanceId);
       }
     }
   } catch (e) { console.error(`warn: EBS volumes ${region}: ${e}`); }
@@ -142,10 +183,8 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     for await (const page of paginateDescribeSecurityGroups({ client }, {})) {
       for (const sg of page.SecurityGroups ?? []) {
-        resources.push({
-          service: 'EC2', type: 'SecurityGroup', region, id: sg.GroupId!,
-          name: sg.GroupName ?? '-', usedBy: [],
-        });
+        resources.push({ service: 'EC2', type: 'SecurityGroup', region, id: sg.GroupId! });
+        if (sg.VpcId) meta.sgVpcIds.set(sg.GroupId!, sg.VpcId);
       }
     }
   } catch (e) { console.error(`warn: security groups ${region}: ${e}`); }
@@ -153,20 +192,14 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     const result = await client.send(new DescribeKeyPairsCommand({}));
     for (const kp of result.KeyPairs ?? []) {
-      resources.push({
-        service: 'EC2', type: 'KeyPair', region, id: kp.KeyPairId ?? '-',
-        name: kp.KeyName ?? '-', createdAt: kp.CreateTime, usedBy: [],
-      });
+      resources.push({ service: 'EC2', type: 'KeyPair', region, id: kp.KeyPairId ?? kp.KeyName! });
     }
   } catch (e) { console.error(`warn: key pairs ${region}: ${e}`); }
 
   try {
     for await (const page of paginateDescribeSnapshots({ client }, { OwnerIds: ['self'] })) {
       for (const snap of page.Snapshots ?? []) {
-        resources.push({
-          service: 'EC2', type: 'Snapshot', region, id: snap.SnapshotId!,
-          name: ec2TagName(snap.Tags), createdAt: snap.StartTime, usedBy: [],
-        });
+        resources.push({ service: 'EC2', type: 'Snapshot', region, id: snap.SnapshotId! });
       }
     }
   } catch (e) { console.error(`warn: snapshots ${region}: ${e}`); }
@@ -174,38 +207,28 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     const result = await client.send(new DescribeAddressesCommand({}));
     for (const addr of result.Addresses ?? []) {
-      const id = addr.AllocationId ?? addr.PublicIp ?? '-';
-      resources.push({
-        service: 'EC2', type: 'ElasticIP', region, id,
-        name: addr.PublicIp ?? '-', usedBy: [],
-      });
+      resources.push({ service: 'EC2', type: 'ElasticIP', region, id: addr.AllocationId ?? addr.PublicIp! });
     }
   } catch (e) { console.error(`warn: elastic IPs ${region}: ${e}`); }
 
   try {
     const result = await client.send(new DescribeImagesCommand({ Owners: ['self'] }));
     for (const img of result.Images ?? []) {
-      resources.push({
-        service: 'EC2', type: 'AMI', region, id: img.ImageId!,
-        name: img.Name ?? '-', createdAt: parseFlexTime(img.CreationDate), usedBy: [],
-      });
+      resources.push({ service: 'EC2', type: 'AMI', region, id: img.ImageId! });
     }
   } catch (e) { console.error(`warn: AMIs ${region}: ${e}`); }
 
   return resources;
 }
 
-async function listVPC(region: string): Promise<Resource[]> {
+async function listVPC(region: string, meta: CollectionMeta): Promise<Resource[]> {
   const client = new EC2Client({ region });
   const resources: Resource[] = [];
 
   try {
     for await (const page of paginateDescribeVpcs({ client }, {})) {
       for (const vpc of page.Vpcs ?? []) {
-        resources.push({
-          service: 'VPC', type: 'VPC', region, id: vpc.VpcId!,
-          name: ec2TagName(vpc.Tags), usedBy: [],
-        });
+        resources.push({ service: 'VPC', type: 'VPC', region, id: vpc.VpcId! });
       }
     }
   } catch (e) { console.error(`warn: VPCs ${region}: ${e}`); }
@@ -213,10 +236,8 @@ async function listVPC(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateDescribeSubnets({ client }, {})) {
       for (const subnet of page.Subnets ?? []) {
-        resources.push({
-          service: 'VPC', type: 'Subnet', region, id: subnet.SubnetId!,
-          name: ec2TagName(subnet.Tags), usedBy: [],
-        });
+        resources.push({ service: 'VPC', type: 'Subnet', region, id: subnet.SubnetId! });
+        if (subnet.VpcId) meta.subnetVpcIds.set(subnet.SubnetId!, subnet.VpcId);
       }
     }
   } catch (e) { console.error(`warn: subnets ${region}: ${e}`); }
@@ -224,10 +245,9 @@ async function listVPC(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateDescribeInternetGateways({ client }, {})) {
       for (const igw of page.InternetGateways ?? []) {
-        resources.push({
-          service: 'VPC', type: 'InternetGateway', region, id: igw.InternetGatewayId!,
-          name: ec2TagName(igw.Tags), usedBy: [],
-        });
+        resources.push({ service: 'VPC', type: 'InternetGateway', region, id: igw.InternetGatewayId! });
+        const vpcId = igw.Attachments?.[0]?.VpcId;
+        if (vpcId) meta.igwVpcIds.set(igw.InternetGatewayId!, vpcId);
       }
     }
   } catch (e) { console.error(`warn: internet gateways ${region}: ${e}`); }
@@ -235,10 +255,8 @@ async function listVPC(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateDescribeNatGateways({ client }, {})) {
       for (const ngw of page.NatGateways ?? []) {
-        resources.push({
-          service: 'VPC', type: 'NatGateway', region, id: ngw.NatGatewayId!,
-          name: ec2TagName(ngw.Tags), createdAt: ngw.CreateTime, usedBy: [],
-        });
+        resources.push({ service: 'VPC', type: 'NatGateway', region, id: ngw.NatGatewayId! });
+        if (ngw.SubnetId) meta.ngwSubnetIds.set(ngw.NatGatewayId!, ngw.SubnetId);
       }
     }
   } catch (e) { console.error(`warn: NAT gateways ${region}: ${e}`); }
@@ -253,11 +271,7 @@ async function listS3(): Promise<Resource[]> {
   try {
     const result = await client.send(new ListBucketsCommand({}));
     for (const bucket of result.Buckets ?? []) {
-      const name = bucket.Name!;
-      resources.push({
-        service: 'S3', type: 'Bucket', region: 'global', id: name,
-        name, createdAt: bucket.CreationDate, usedBy: [],
-      });
+      resources.push({ service: 'S3', type: 'Bucket', region: 'global', id: bucket.Name! });
     }
   } catch (e) { console.error(`warn: S3 buckets: ${e}`); }
 
@@ -271,10 +285,7 @@ async function listIAM(): Promise<Resource[]> {
   try {
     for await (const page of paginateListUsers({ client }, {})) {
       for (const user of page.Users ?? []) {
-        resources.push({
-          service: 'IAM', type: 'User', region: 'global', id: user.Arn!,
-          name: user.UserName!, createdAt: user.CreateDate, usedBy: [],
-        });
+        resources.push({ service: 'IAM', type: 'User', region: 'global', id: user.Arn! });
       }
     }
   } catch (e) { console.error(`warn: IAM users: ${e}`); }
@@ -282,10 +293,7 @@ async function listIAM(): Promise<Resource[]> {
   try {
     for await (const page of paginateListRoles({ client }, {})) {
       for (const role of page.Roles ?? []) {
-        resources.push({
-          service: 'IAM', type: 'Role', region: 'global', id: role.Arn!,
-          name: role.RoleName!, createdAt: role.CreateDate, usedBy: [],
-        });
+        resources.push({ service: 'IAM', type: 'Role', region: 'global', id: role.Arn! });
       }
     }
   } catch (e) { console.error(`warn: IAM roles: ${e}`); }
@@ -293,10 +301,7 @@ async function listIAM(): Promise<Resource[]> {
   try {
     for await (const page of paginateListGroups({ client }, {})) {
       for (const group of page.Groups ?? []) {
-        resources.push({
-          service: 'IAM', type: 'Group', region: 'global', id: group.Arn!,
-          name: group.GroupName!, createdAt: group.CreateDate, usedBy: [],
-        });
+        resources.push({ service: 'IAM', type: 'Group', region: 'global', id: group.Arn! });
       }
     }
   } catch (e) { console.error(`warn: IAM groups: ${e}`); }
@@ -304,18 +309,7 @@ async function listIAM(): Promise<Resource[]> {
   try {
     for await (const page of paginateListPolicies({ client }, { Scope: PolicyScopeType.Local })) {
       for (const policy of page.Policies ?? []) {
-        const resource: Resource = {
-          service: 'IAM', type: 'Policy', region: 'global', id: policy.Arn!,
-          name: policy.PolicyName!, createdAt: policy.CreateDate, usedBy: [],
-        };
-        try {
-          for await (const epage of paginateListEntitiesForPolicy({ client }, { PolicyArn: policy.Arn! })) {
-            for (const role of epage.PolicyRoles ?? []) resource.usedBy.push(`${role.RoleName} (Role)`);
-            for (const user of epage.PolicyUsers ?? []) resource.usedBy.push(`${user.UserName} (User)`);
-            for (const group of epage.PolicyGroups ?? []) resource.usedBy.push(`${group.GroupName} (Group)`);
-          }
-        } catch (e) { console.error(`warn: IAM policy entities ${policy.PolicyName}: ${e}`); }
-        resources.push(resource);
+        resources.push({ service: 'IAM', type: 'Policy', region: 'global', id: policy.Arn! });
       }
     }
   } catch (e) { console.error(`warn: IAM policies: ${e}`); }
@@ -323,7 +317,7 @@ async function listIAM(): Promise<Resource[]> {
   return resources;
 }
 
-async function listRDS(region: string): Promise<Resource[]> {
+async function listRDS(region: string, meta: CollectionMeta): Promise<Resource[]> {
   const client = new RDSClient({ region });
   const resources: Resource[] = [];
 
@@ -331,10 +325,8 @@ async function listRDS(region: string): Promise<Resource[]> {
     for await (const page of paginateDescribeDBInstances({ client }, {})) {
       for (const db of page.DBInstances ?? []) {
         const id = db.DBInstanceIdentifier!;
-        resources.push({
-          service: 'RDS', type: 'DBInstance', region, id, name: id,
-          createdAt: db.InstanceCreateTime, usedBy: [],
-        });
+        resources.push({ service: 'RDS', type: 'DBInstance', region, id });
+        if (db.DBClusterIdentifier) meta.dbInstanceClusterIds.set(id, db.DBClusterIdentifier);
       }
     }
   } catch (e) { console.error(`warn: RDS instances ${region}: ${e}`); }
@@ -342,11 +334,7 @@ async function listRDS(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateDescribeDBClusters({ client }, {})) {
       for (const cluster of page.DBClusters ?? []) {
-        const id = cluster.DBClusterIdentifier!;
-        resources.push({
-          service: 'RDS', type: 'DBCluster', region, id, name: id,
-          createdAt: cluster.ClusterCreateTime, usedBy: [],
-        });
+        resources.push({ service: 'RDS', type: 'DBCluster', region, id: cluster.DBClusterIdentifier! });
       }
     }
   } catch (e) { console.error(`warn: RDS clusters ${region}: ${e}`); }
@@ -354,19 +342,14 @@ async function listRDS(region: string): Promise<Resource[]> {
   return resources;
 }
 
-async function listLambda(region: string, meta: CollectionMeta): Promise<Resource[]> {
+async function listLambda(region: string): Promise<Resource[]> {
   const client = new LambdaClient({ region });
   const resources: Resource[] = [];
 
   try {
     for await (const page of paginateListFunctions({ client }, {})) {
       for (const fn of page.Functions ?? []) {
-        const arn = fn.FunctionArn!;
-        resources.push({
-          service: 'Lambda', type: 'Function', region, id: arn,
-          name: fn.FunctionName!, createdAt: parseFlexTime(fn.LastModified), usedBy: [],
-        });
-        if (fn.Role) meta.lambdaRoles.set(arn, fn.Role);
+        resources.push({ service: 'Lambda', type: 'Function', region, id: fn.FunctionArn! });
       }
     }
   } catch (e) { console.error(`warn: Lambda ${region}: ${e}`); }
@@ -381,9 +364,7 @@ async function listDynamoDB(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateListTables({ client }, {})) {
       for (const tableName of page.TableNames ?? []) {
-        resources.push({
-          service: 'DynamoDB', type: 'Table', region, id: tableName, name: tableName, usedBy: [],
-        });
+        resources.push({ service: 'DynamoDB', type: 'Table', region, id: tableName });
       }
     }
   } catch (e) { console.error(`warn: DynamoDB ${region}: ${e}`); }
@@ -398,10 +379,7 @@ async function listCloudFormation(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateDescribeStacks({ client }, {})) {
       for (const stack of page.Stacks ?? []) {
-        resources.push({
-          service: 'CloudFormation', type: 'Stack', region, id: stack.StackId!,
-          name: stack.StackName!, createdAt: stack.CreationTime, usedBy: [],
-        });
+        resources.push({ service: 'CloudFormation', type: 'Stack', region, id: stack.StackId! });
       }
     }
   } catch (e) { console.error(`warn: CloudFormation ${region}: ${e}`); }
@@ -416,9 +394,7 @@ async function listECS(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateECSClusters({ client }, {})) {
       for (const arn of page.clusterArns ?? []) {
-        resources.push({
-          service: 'ECS', type: 'Cluster', region, id: arn, name: arn, usedBy: [],
-        });
+        resources.push({ service: 'ECS', type: 'Cluster', region, id: arn });
       }
     }
   } catch (e) { console.error(`warn: ECS ${region}: ${e}`); }
@@ -433,9 +409,7 @@ async function listEKS(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateEKSClusters({ client }, {})) {
       for (const name of page.clusters ?? []) {
-        resources.push({
-          service: 'EKS', type: 'Cluster', region, id: name, name, usedBy: [],
-        });
+        resources.push({ service: 'EKS', type: 'Cluster', region, id: name });
       }
     }
   } catch (e) { console.error(`warn: EKS ${region}: ${e}`); }
@@ -450,10 +424,7 @@ async function listSNS(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateListTopics({ client }, {})) {
       for (const topic of page.Topics ?? []) {
-        const arn = topic.TopicArn!;
-        resources.push({
-          service: 'SNS', type: 'Topic', region, id: arn, name: arn, usedBy: [],
-        });
+        resources.push({ service: 'SNS', type: 'Topic', region, id: topic.TopicArn! });
       }
     }
   } catch (e) { console.error(`warn: SNS ${region}: ${e}`); }
@@ -468,9 +439,7 @@ async function listSQS(region: string): Promise<Resource[]> {
   try {
     for await (const page of paginateListQueues({ client }, {})) {
       for (const url of page.QueueUrls ?? []) {
-        resources.push({
-          service: 'SQS', type: 'Queue', region, id: url, name: url, usedBy: [],
-        });
+        resources.push({ service: 'SQS', type: 'Queue', region, id: url });
       }
     }
   } catch (e) { console.error(`warn: SQS ${region}: ${e}`); }
@@ -478,7 +447,7 @@ async function listSQS(region: string): Promise<Resource[]> {
   return resources;
 }
 
-async function listCloudFront(meta: CollectionMeta): Promise<Resource[]> {
+async function listCloudFront(): Promise<Resource[]> {
   const client = new CloudFrontClient({ region: 'us-east-1' });
   const resources: Resource[] = [];
   let marker: string | undefined;
@@ -488,24 +457,9 @@ async function listCloudFront(meta: CollectionMeta): Promise<Resource[]> {
       const result = await client.send(new ListDistributionsCommand({ Marker: marker }));
       const list = result.DistributionList;
       if (!list) break;
-
       for (const dist of list.Items ?? []) {
-        const distId = dist.Id!;
-        resources.push({
-          service: 'CloudFront', type: 'Distribution', region: 'global', id: distId,
-          name: dist.DomainName!, createdAt: dist.LastModifiedTime, usedBy: [],
-        });
-        for (const origin of dist.Origins?.Items ?? []) {
-          const domain = origin.DomainName ?? '';
-          const idx = domain.indexOf('.s3.');
-          if (idx > 0) {
-            const existing = meta.cfS3Buckets.get(distId) ?? [];
-            existing.push(domain.slice(0, idx));
-            meta.cfS3Buckets.set(distId, existing);
-          }
-        }
+        resources.push({ service: 'CloudFront', type: 'Distribution', region: 'global', id: dist.Id! });
       }
-
       if (!list.IsTruncated) break;
       marker = list.NextMarker;
     }
@@ -521,10 +475,7 @@ async function listRoute53(): Promise<Resource[]> {
   try {
     for await (const page of paginateListHostedZones({ client }, {})) {
       for (const zone of page.HostedZones ?? []) {
-        resources.push({
-          service: 'Route53', type: 'HostedZone', region: 'global', id: zone.Id!,
-          name: zone.Name!, usedBy: [],
-        });
+        resources.push({ service: 'Route53', type: 'HostedZone', region: 'global', id: zone.Id! });
       }
     }
   } catch (e) { console.error(`warn: Route53: ${e}`); }
@@ -532,100 +483,76 @@ async function listRoute53(): Promise<Resource[]> {
   return resources;
 }
 
-function resolveUsedBy(resources: Resource[], meta: CollectionMeta): void {
-  const instanceNames = new Map<string, string>();
-  const lambdaNames = new Map<string, string>();
-
-  for (const r of resources) {
-    if (r.service === 'EC2' && r.type === 'Instance') {
-      instanceNames.set(r.id, r.name === '-' || r.name === '' ? r.id : r.name);
-    } else if (r.service === 'Lambda' && r.type === 'Function') {
-      lambdaNames.set(r.id, r.name);
-    }
-  }
-
-  const sgToInst = new Map<string, string[]>();
-  for (const [id, sgs] of meta.instanceSGIds) {
-    const name = instanceNames.get(id) ?? id;
-    for (const sg of sgs) {
-      const arr = sgToInst.get(sg) ?? [];
-      arr.push(name);
-      sgToInst.set(sg, arr);
-    }
-  }
-
-  const vpcToInst = new Map<string, string[]>();
-  for (const [id, vpc] of meta.instanceVPCIds) {
-    const arr = vpcToInst.get(vpc) ?? [];
-    arr.push(instanceNames.get(id) ?? id);
-    vpcToInst.set(vpc, arr);
-  }
-
-  const subToInst = new Map<string, string[]>();
-  for (const [id, sub] of meta.instanceSubIds) {
-    const arr = subToInst.get(sub) ?? [];
-    arr.push(instanceNames.get(id) ?? id);
-    subToInst.set(sub, arr);
-  }
-
-  const roleToLambda = new Map<string, string[]>();
-  for (const [fnArn, roleArn] of meta.lambdaRoles) {
-    const arr = roleToLambda.get(roleArn) ?? [];
-    arr.push(lambdaNames.get(fnArn) ?? fnArn);
-    roleToLambda.set(roleArn, arr);
-  }
-
-  const bucketToCF = new Map<string, string[]>();
-  for (const [distId, buckets] of meta.cfS3Buckets) {
-    for (const b of buckets) {
-      const arr = bucketToCF.get(b) ?? [];
-      arr.push(distId);
-      bucketToCF.set(b, arr);
-    }
-  }
-
-  for (const r of resources) {
-    if (r.service === 'IAM' && r.type === 'Role') {
-      for (const fn of roleToLambda.get(r.id) ?? []) r.usedBy.push(`${fn} (Lambda)`);
-    } else if (r.service === 'EC2' && r.type === 'SecurityGroup') {
-      for (const inst of sgToInst.get(r.id) ?? []) r.usedBy.push(`${inst} (EC2)`);
-    } else if (r.service === 'VPC' && r.type === 'VPC') {
-      for (const inst of vpcToInst.get(r.id) ?? []) r.usedBy.push(`${inst} (EC2)`);
-    } else if (r.service === 'VPC' && r.type === 'Subnet') {
-      for (const inst of subToInst.get(r.id) ?? []) r.usedBy.push(`${inst} (EC2)`);
-    } else if (r.service === 'S3' && r.type === 'Bucket') {
-      for (const dist of bucketToCF.get(r.name) ?? []) r.usedBy.push(`${dist} (CloudFront)`);
-    }
-  }
+interface TreeNode {
+  arn: string;
+  children?: TreeNode[];
 }
 
-function printTable(resources: Resource[]): void {
-  const headers = ['SERVICE', 'TYPE', 'REGION', 'ID', 'NAME', 'CREATED', 'USED BY'];
-  const widths = headers.map(h => h.length);
+function buildTree(resources: Resource[], meta: CollectionMeta, accountId: string): TreeNode[] {
+  // Map raw id -> computed ARN for parent lookups
+  const arnById = new Map<string, string>();
+  for (const r of resources) {
+    arnById.set(r.id, toArn(r, accountId));
+  }
 
-  const rows = resources.map(r => [
-    r.service, r.type, r.region, r.id, r.name,
-    fmtDate(r.createdAt), r.usedBy.join(', '),
-  ]);
+  // Determine parent ARN for each resource
+  const parentArnOf = new Map<string, string>();
+  for (const r of resources) {
+    const arn = toArn(r, accountId);
+    let parentId: string | undefined;
 
-  for (const row of rows) {
-    for (let i = 0; i < row.length; i++) {
-      widths[i] = Math.max(widths[i], row[i].length);
+    if (r.service === 'VPC' && r.type === 'Subnet') {
+      parentId = meta.subnetVpcIds.get(r.id);
+    } else if (r.service === 'VPC' && r.type === 'InternetGateway') {
+      parentId = meta.igwVpcIds.get(r.id);
+    } else if (r.service === 'VPC' && r.type === 'NatGateway') {
+      parentId = meta.ngwSubnetIds.get(r.id);
+    } else if (r.service === 'EC2' && r.type === 'SecurityGroup') {
+      parentId = meta.sgVpcIds.get(r.id);
+    } else if (r.service === 'EC2' && r.type === 'Volume') {
+      parentId = meta.volumeInstanceIds.get(r.id);
+    } else if (r.service === 'EC2' && r.type === 'Instance') {
+      parentId = meta.instanceSubIds.get(r.id);
+    } else if (r.service === 'RDS' && r.type === 'DBInstance') {
+      parentId = meta.dbInstanceClusterIds.get(r.id);
+    }
+
+    if (parentId) {
+      const parentArn = arnById.get(parentId);
+      if (parentArn) parentArnOf.set(arn, parentArn);
     }
   }
 
-  const pad = (s: string, w: number) => s.padEnd(w);
-  console.log(headers.map((h, i) => pad(h, widths[i])).join('  '));
-  console.log(widths.map(w => '-'.repeat(w)).join('  '));
-  for (const row of rows) {
-    console.log(row.map((c, i) => pad(c, widths[i])).join('  '));
+  // Build tree nodes
+  const nodes = new Map<string, TreeNode>();
+  for (const r of resources) {
+    const arn = toArn(r, accountId);
+    nodes.set(arn, { arn });
   }
+
+  const roots: TreeNode[] = [];
+  for (const [arn, node] of nodes) {
+    const parentArn = parentArnOf.get(arn);
+    if (parentArn && nodes.has(parentArn)) {
+      const parent = nodes.get(parentArn)!;
+      if (!parent.children) parent.children = [];
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+function printJSON(tree: TreeNode[]): void {
+  console.log(JSON.stringify(tree, null, 2));
 }
 
 async function main(): Promise<void> {
-  console.error('Discovering regions...');
-  const regions = await getRegions();
-  console.error(`Scanning ${regions.length} regions across 14 services...`);
+  console.error('Resolving account and regions...');
+  const [accountId, regions] = await Promise.all([getAccountId(), getRegions()]);
+  console.error(`Account: ${accountId} — scanning ${regions.length} regions across 14 services...`);
 
   const meta = newMeta();
   const allResources: Resource[] = [];
@@ -633,7 +560,7 @@ async function main(): Promise<void> {
   const globalResults = await Promise.all([
     listS3(),
     listIAM(),
-    listCloudFront(meta),
+    listCloudFront(),
     listRoute53(),
   ]);
   for (const r of globalResults) allResources.push(...r);
@@ -642,9 +569,9 @@ async function main(): Promise<void> {
     regions.map(region =>
       Promise.all([
         listEC2(region, meta),
-        listVPC(region),
-        listRDS(region),
-        listLambda(region, meta),
+        listVPC(region, meta),
+        listRDS(region, meta),
+        listLambda(region),
         listDynamoDB(region),
         listCloudFormation(region),
         listECS(region),
@@ -656,16 +583,8 @@ async function main(): Promise<void> {
   );
   for (const r of regionalResults) allResources.push(...r);
 
-  resolveUsedBy(allResources, meta);
-
-  allResources.sort((a, b) => {
-    if (!a.createdAt && !b.createdAt) return 0;
-    if (!a.createdAt) return 1;
-    if (!b.createdAt) return -1;
-    return a.createdAt.getTime() - b.createdAt.getTime();
-  });
-
-  printTable(allResources);
+  const tree = buildTree(allResources, meta, accountId);
+  printJSON(tree);
   console.error(`\nTotal: ${allResources.length} resources found`);
 }
 
