@@ -1,0 +1,62 @@
+name: List AWS Resources
+
+on:
+  workflow_dispatch:
+    inputs:
+      account:
+        description: 'AWS account to scan'
+        required: true
+        default: management
+        type: choice
+        options:
+          - management
+          - production
+
+env:
+  NODE_VERSION: '22'
+  AUTHORIZED_ACTOR: ${{ secrets.AUTHORIZED_ACTOR }}
+
+jobs:
+  list-resources:
+    name: List AWS resources – ${{ inputs.account }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Check authorized actor
+        if: github.actor != env.AUTHORIZED_ACTOR
+        run: |
+          echo "❌ '${{ github.actor }}' is not authorized to run this workflow."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: list-resources/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./list-resources
+        run: npm install
+
+      - name: Resolve account ID
+        id: account
+        run: |
+          if [ "${{ inputs.account }}" = "management" ]; then
+            echo "account_id=${{ secrets.CICD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "account_id=${{ secrets.PROD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ steps.account.outputs.account_id }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: List resources
+        working-directory: ./list-resources
+        run: npx ts-node src/index.ts
