@@ -27,6 +27,8 @@
   },
   "exclude": [
     "node_modules",
-    "cdk.out"
+    "cdk.out",
+    "lambda",
+    "lib/github-runner/lambda"
   ]
 }

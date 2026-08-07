@@ -1,0 +1,43 @@
+name: GithubRunnerComponent
+description: Installs Node.js 20 and GitHub Actions runner binary on Amazon Linux 2023
+schemaVersion: 1.0
+phases:
+  - name: build
+    steps:
+      - name: InstallNodejs
+        action: ExecuteBash
+        inputs:
+          commands:
+            - yum install -y tar gzip curl python3
+            - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+            - yum install -y nodejs
+
+      - name: SetupRunnerUser
+        action: ExecuteBash
+        inputs:
+          commands:
+            - useradd -m github-runner || true
+            - mkdir -p /opt/actions-runner
+            - chown github-runner:github-runner /opt/actions-runner
+
+      - name: InstallRunnerBinary
+        action: ExecuteBash
+        inputs:
+          commands:
+            - ARCH=$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')
+            - RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'][1:])")
+            - curl -o /tmp/actions-runner.tar.gz -L "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${ARCH}-${RUNNER_VERSION}.tar.gz"
+            - tar xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner
+            - rm /tmp/actions-runner.tar.gz
+            - /opt/actions-runner/bin/installdependencies.sh
+            - chown -R github-runner:github-runner /opt/actions-runner
+
+  - name: validate
+    steps:
+      - name: ValidateInstall
+        action: ExecuteBash
+        inputs:
+          commands:
+            - node --version
+            - test -f /opt/actions-runner/config.sh
+            - /opt/actions-runner/config.sh --version
