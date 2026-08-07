@@ -224,10 +224,15 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
 async function listVPC(region: string, meta: CollectionMeta): Promise<Resource[]> {
   const client = new EC2Client({ region });
   const resources: Resource[] = [];
+  const defaultVpcIds = new Set<string>();
 
   try {
     for await (const page of paginateDescribeVpcs({ client }, {})) {
       for (const vpc of page.Vpcs ?? []) {
+        if (vpc.IsDefault) {
+          defaultVpcIds.add(vpc.VpcId!);
+          continue;
+        }
         resources.push({ service: 'VPC', type: 'VPC', region, id: vpc.VpcId! });
       }
     }
@@ -236,6 +241,7 @@ async function listVPC(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     for await (const page of paginateDescribeSubnets({ client }, {})) {
       for (const subnet of page.Subnets ?? []) {
+        if (subnet.VpcId && defaultVpcIds.has(subnet.VpcId)) continue;
         resources.push({ service: 'VPC', type: 'Subnet', region, id: subnet.SubnetId! });
         if (subnet.VpcId) meta.subnetVpcIds.set(subnet.SubnetId!, subnet.VpcId);
       }
