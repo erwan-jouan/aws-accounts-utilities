@@ -10,7 +10,6 @@ import {
   paginateDescribeSnapshots,
   paginateDescribeVpcs,
   paginateDescribeSubnets,
-  paginateDescribeInternetGateways,
   paginateDescribeNatGateways,
 } from '@aws-sdk/client-ec2';
 import { S3Client, ListBucketsCommand } from '@aws-sdk/client-s3';
@@ -59,7 +58,6 @@ interface Resource {
 
 interface CollectionMeta {
   subnetVpcIds: Map<string, string>;         // subnetId -> vpcId
-  igwVpcIds: Map<string, string>;            // igwId -> vpcId
   ngwSubnetIds: Map<string, string>;         // ngwId -> subnetId
   sgVpcIds: Map<string, string>;             // sgId -> vpcId
   volumeInstanceIds: Map<string, string>;    // volumeId -> instanceId
@@ -70,7 +68,6 @@ interface CollectionMeta {
 function newMeta(): CollectionMeta {
   return {
     subnetVpcIds: new Map(),
-    igwVpcIds: new Map(),
     ngwSubnetIds: new Map(),
     sgVpcIds: new Map(),
     volumeInstanceIds: new Map(),
@@ -249,17 +246,7 @@ async function listVPC(region: string, meta: CollectionMeta): Promise<Resource[]
     }
   } catch (e) { console.error(`warn: subnets ${region}: ${e}`); }
 
-  try {
-    for await (const page of paginateDescribeInternetGateways({ client }, {})) {
-      for (const igw of page.InternetGateways ?? []) {
-        resources.push({ service: 'VPC', type: 'InternetGateway', region, id: igw.InternetGatewayId! });
-        const vpcId = igw.Attachments?.[0]?.VpcId;
-        if (vpcId) meta.igwVpcIds.set(igw.InternetGatewayId!, vpcId);
-      }
-    }
-  } catch (e) { console.error(`warn: internet gateways ${region}: ${e}`); }
-
-  try {
+try {
     for await (const page of paginateDescribeNatGateways({ client }, {})) {
       for (const ngw of page.NatGateways ?? []) {
         resources.push({ service: 'VPC', type: 'NatGateway', region, id: ngw.NatGatewayId! });
@@ -510,8 +497,6 @@ function buildTree(resources: Resource[], meta: CollectionMeta, accountId: strin
 
     if (r.service === 'VPC' && r.type === 'Subnet') {
       parentId = meta.subnetVpcIds.get(r.id);
-    } else if (r.service === 'VPC' && r.type === 'InternetGateway') {
-      parentId = meta.igwVpcIds.get(r.id);
     } else if (r.service === 'VPC' && r.type === 'NatGateway') {
       parentId = meta.ngwSubnetIds.get(r.id);
     } else if (r.service === 'EC2' && r.type === 'SecurityGroup') {
