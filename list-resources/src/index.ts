@@ -183,6 +183,7 @@ async function listEC2(region: string, meta: CollectionMeta): Promise<Resource[]
   try {
     for await (const page of paginateDescribeSecurityGroups({ client }, {})) {
       for (const sg of page.SecurityGroups ?? []) {
+        if (sg.GroupName === 'default') continue;
         resources.push({ service: 'EC2', type: 'SecurityGroup', region, id: sg.GroupId! });
         if (sg.VpcId) meta.sgVpcIds.set(sg.GroupId!, sg.VpcId);
       }
