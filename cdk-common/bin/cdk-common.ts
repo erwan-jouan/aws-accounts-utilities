@@ -1,7 +1,6 @@
 #!/opt/homebrew/opt/node/bin/node
 import * as cdk from 'aws-cdk-lib/core';
 import { CdkCommonStack } from '../lib/cdk-common-stack';
-import { GithubRunnerStack } from '../lib/github-runner/GithubRunnerStack';
 
 const app = new cdk.App();
 
@@ -20,17 +19,3 @@ new CdkCommonStack(app, 'CdkCommonStack', {
 
   /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
 });
-
-const githubOrg = process.env.GITHUB_ORG;
-const githubTokenSecretName = process.env.GITHUB_TOKEN_SECRET_NAME;
-
-if (githubOrg && githubTokenSecretName) {
-  new GithubRunnerStack(app, 'GithubRunnerStack', {
-    githubOrg,
-    githubTokenSecretName,
-    env: {
-      account: process.env.CDK_DEFAULT_ACCOUNT,
-      region: process.env.CDK_DEFAULT_REGION,
-    },
-  });
-}
