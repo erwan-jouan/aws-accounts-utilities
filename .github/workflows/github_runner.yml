@@ -44,3 +44,6 @@ jobs:
           npx cdk bootstrap aws://${{ secrets.CICD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
       - name: Deploy cdk-management stack
         run: npx cdk deploy --require-approval never
+        env:
+          GITHUB_ORG: ${{ secrets.GITHUB_ORG }}
+          GITHUB_TOKEN_SECRET_NAME: ${{ secrets.GITHUB_TOKEN_SECRET_NAME }}
