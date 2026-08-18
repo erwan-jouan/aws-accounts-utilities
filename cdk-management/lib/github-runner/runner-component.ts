@@ -17,7 +17,7 @@ export class RunnerComponent extends Construct {
     const component = new imagebuilder.CfnComponent(this, 'Component', {
       name: 'github-runner',
       platform: 'Linux',
-      version: '1.0.0',
+      version: '1.0.1',
       description: 'Installs Node.js 20 and GitHub Actions runner binary',
       data,
       supportedOsVersions: ['Amazon Linux 2023'],

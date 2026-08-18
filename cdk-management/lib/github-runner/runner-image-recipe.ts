@@ -17,7 +17,7 @@ export class RunnerImageRecipe extends Construct {
 
     const recipe = new imagebuilder.CfnImageRecipe(this, 'Recipe', {
       name: 'github-runner',
-      version: '1.0.0',
+      version: '1.0.3',
       parentImage,
       components: [
         { componentArn: runnerComponentArn },

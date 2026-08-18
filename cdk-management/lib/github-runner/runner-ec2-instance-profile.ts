@@ -1,11 +1,19 @@
+import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import { Construct } from 'constructs';
 
+export interface RunnerEc2InstanceProfileProps {
+  githubTokenSecretName: string;
+}
+
 export class RunnerEc2InstanceProfile extends Construct {
   readonly name: string;
+  readonly roleArn: string;
 
-  constructor(scope: Construct, id: string) {
+  constructor(scope: Construct, id: string, props: RunnerEc2InstanceProfileProps) {
     super(scope, id);
+
+    const stack = cdk.Stack.of(this);
 
     const role = new iam.Role(this, 'Role', {
       assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
@@ -24,7 +32,16 @@ export class RunnerEc2InstanceProfile extends Construct {
       },
     }));
 
+    // Read the GitHub PAT from Secrets Manager during user data bootstrap
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ['secretsmanager:GetSecretValue'],
+      resources: [
+        `arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:${props.githubTokenSecretName}*`,
+      ],
+    }));
+
     const profile = new iam.InstanceProfile(this, 'Profile', { role });
     this.name = profile.instanceProfileName;
+    this.roleArn = role.roleArn;
   }
 }

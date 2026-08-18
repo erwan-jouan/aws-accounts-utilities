@@ -14,23 +14,25 @@ on:
 
 env:
   NODE_VERSION: '22'
-  AUTHORIZED_ACTOR: ${{ secrets.AUTHORIZED_ACTOR }}
 
 jobs:
+
+  launch-runner:
+    uses: ./.github/workflows/launch-runner.yml
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: read
+
   list-resources:
     name: List AWS resources – ${{ inputs.account }}
-    runs-on: ubuntu-latest
+    needs: launch-runner
+    runs-on: [self-hosted, "${{ needs.launch-runner.outputs.runner-name }}"]
     environment: production
     permissions:
       id-token: write
       contents: read
     steps:
-      - name: Check authorized actor
-        if: github.actor != env.AUTHORIZED_ACTOR
-        run: |
-          echo "❌ '${{ github.actor }}' is not authorized to run this workflow."
-          exit 1
-
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4

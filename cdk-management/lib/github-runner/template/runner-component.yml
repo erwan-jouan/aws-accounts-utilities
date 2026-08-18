@@ -8,6 +8,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
+            - set -x
             - yum install -y tar gzip curl python3
             - curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
             - yum install -y nodejs
@@ -16,6 +17,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
+            - set -x
             - useradd -m github-runner || true
             - mkdir -p /opt/actions-runner
             - chown github-runner:github-runner /opt/actions-runner
@@ -24,12 +26,13 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
+            - set -x
             - ARCH=$(uname -m | sed 's/x86_64/x64/' | sed 's/aarch64/arm64/')
             - RUNNER_VERSION=$(curl -s https://api.github.com/repos/actions/runner/releases/latest | python3 -c "import sys,json; print(json.load(sys.stdin)['tag_name'][1:])")
             - curl -o /tmp/actions-runner.tar.gz -L "https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-${ARCH}-${RUNNER_VERSION}.tar.gz"
             - tar xzf /tmp/actions-runner.tar.gz -C /opt/actions-runner
             - rm /tmp/actions-runner.tar.gz
-            - /opt/actions-runner/bin/installdependencies.sh
+            - dnf install -y libicu openssl-libs krb5-libs zlib lttng-ust || dnf install -y libicu openssl-libs krb5-libs zlib
             - chown -R github-runner:github-runner /opt/actions-runner
 
   - name: validate
@@ -38,6 +41,7 @@ phases:
         action: ExecuteBash
         inputs:
           commands:
+            - set -x
             - node --version
             - test -f /opt/actions-runner/config.sh
-            - /opt/actions-runner/config.sh --version
+            - runuser -u github-runner -- bash -c 'cd /opt/actions-runner && ./config.sh --version'

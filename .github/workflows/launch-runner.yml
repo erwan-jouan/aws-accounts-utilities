@@ -1,0 +1,66 @@
+name: Launch self-hosted runner (reusable)
+
+on:
+  workflow_call:
+    outputs:
+      runner-name:
+        description: Name of the registered ephemeral self-hosted runner
+        value: ${{ jobs.launch-runner.outputs.runner-name }}
+
+jobs:
+
+  launch-runner:
+    environment: production
+    name: Launch self-hosted runner
+    runs-on: ubuntu-latest
+    outputs:
+      runner-name: ${{ steps.launch.outputs.runner-name }}
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AUTHORIZED_ACTOR: ${{ secrets.AUTHORIZED_ACTOR }}
+    steps:
+      - name: Check authorized actor
+        if: github.actor != env.AUTHORIZED_ACTOR
+        run: |
+          echo "❌ '${{ github.actor }}' is not authorized to run this workflow."
+          exit 1
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Resolve launcher function name
+        id: params
+        run: |
+          FUNCTION_NAME=$(aws ssm get-parameter \
+            --name /github-runner/launcher-function-name \
+            --query 'Parameter.Value' \
+            --output text)
+          echo "function-name=$FUNCTION_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Launch runner
+        id: launch
+        run: |
+          METADATA=$(aws lambda invoke \
+            --function-name ${{ steps.params.outputs.function-name }} \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{}' \
+            --log-type Tail \
+            /tmp/runner-output.json)
+
+          # Print Lambda logs for debugging
+          echo "$METADATA" | jq -r '.LogResult // empty' | base64 -d || true
+
+          FUNCTION_ERROR=$(echo "$METADATA" | jq -r '.FunctionError // empty')
+          if [ -n "$FUNCTION_ERROR" ]; then
+            echo "❌ Lambda failed: $FUNCTION_ERROR"
+            cat /tmp/runner-output.json
+            exit 1
+          fi
+
+          RUNNER_NAME=$(jq -r '.runnerName' /tmp/runner-output.json)
+          echo "runner-name=$RUNNER_NAME" >> "$GITHUB_OUTPUT"
+          echo "✅ Runner launched: $RUNNER_NAME"
