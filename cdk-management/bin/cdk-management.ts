@@ -4,8 +4,8 @@ import { GithubRunnerStack } from '../lib/github-runner/GithubRunnerStack';
 
 const app = new cdk.App();
 
-const githubOrg = process.env.GITHUB_ORG;
-const githubTokenSecretName = process.env.GITHUB_TOKEN_SECRET_NAME;
+const githubOrg = process.env.GH_ORG;
+const githubTokenSecretName = process.env.GH_TOKEN_SECRET_NAME;
 
 if (githubOrg && githubTokenSecretName) {
   new GithubRunnerStack(app, 'GithubRunnerStack', {

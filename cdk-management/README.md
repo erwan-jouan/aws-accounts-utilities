@@ -75,8 +75,8 @@ In this repository go to **Settings → Secrets and variables → Actions** and 
 
 | Secret name | Value |
 |---|---|
-| `GITHUB_ORG` | Your GitHub organization name (e.g. `my-org`) |
-| `GITHUB_TOKEN_SECRET_NAME` | The Secrets Manager secret name from step 2 (e.g. `github-runner/pat`) |
+| `GH_ORG` | Your GitHub organization name (e.g. `my-org`) |
+| `GH_TOKEN_SECRET_NAME` | The Secrets Manager secret name from step 2 (e.g. `github-runner/pat`) |
 
 The following secrets must already exist from the initial bootstrap:
 
@@ -100,8 +100,8 @@ To deploy locally instead:
 ```bash
 cd cdk-management
 npm ci
-GITHUB_ORG=my-org \
-GITHUB_TOKEN_SECRET_NAME=github-runner/pat \
+GH_ORG=my-org \
+GH_TOKEN_SECRET_NAME=github-runner/pat \
 npx cdk deploy GithubRunnerStack
 ```
 

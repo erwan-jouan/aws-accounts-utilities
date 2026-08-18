@@ -24,8 +24,8 @@ export class RegistrationLambda extends Construct {
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.minutes(10),
       environment: {
-        GITHUB_ORG: props.githubOrg,
-        GITHUB_TOKEN_SECRET_NAME: props.githubTokenSecretName,
+        GH_ORG: props.githubOrg,
+        GH_TOKEN_SECRET_NAME: props.githubTokenSecretName,
       },
     });
 

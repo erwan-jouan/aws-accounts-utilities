@@ -12,8 +12,8 @@ const ec2 = new EC2Client({});
 const ssm = new SSMClient({});
 const sm = new SecretsManagerClient({});
 
-const GITHUB_ORG = process.env.GITHUB_ORG!;
-const SECRET_NAME = process.env.GITHUB_TOKEN_SECRET_NAME!;
+const GH_ORG = process.env.GH_ORG!;
+const SECRET_NAME = process.env.GH_TOKEN_SECRET_NAME!;
 
 async function getGithubPat(): Promise<string> {
   const { SecretString } = await sm.send(new GetSecretValueCommand({ SecretId: SECRET_NAME }));
@@ -61,7 +61,7 @@ function githubPost(path: string, pat: string): Promise<{ token: string }> {
 
 async function getRegistrationToken(pat: string): Promise<string> {
   const result = await githubPost(
-    `/orgs/${GITHUB_ORG}/actions/runners/registration-token`,
+    `/orgs/${GH_ORG}/actions/runners/registration-token`,
     pat
   );
   return result.token;
@@ -94,7 +94,7 @@ export async function handler(event: { detail: { 'instance-id': string } }): Pro
   const region = process.env.AWS_REGION ?? 'us-east-1';
   const commands = [
     'cd /opt/actions-runner',
-    `sudo -u github-runner ./config.sh --url https://github.com/${GITHUB_ORG} --token ${token} --name ${instanceId} --ephemeral --unattended --labels self-hosted,linux`,
+    `sudo -u github-runner ./config.sh --url https://github.com/${GH_ORG} --token ${token} --name ${instanceId} --ephemeral --unattended --labels self-hosted,linux`,
     `sudo -u github-runner bash -c './run.sh; aws ec2 terminate-instances --instance-ids ${instanceId} --region ${region}'`,
   ];
 

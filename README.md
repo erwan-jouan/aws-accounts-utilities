@@ -21,13 +21,13 @@ This deploys `cf-github-oidc.yml` to both accounts in sequence. The stack create
 Override org/repo if needed (defaults are `erwanjouan` / `aws-accounts-prerequisites`):
 
 ```bash
-make deploy-oidc GITHUB_ORG=my-org GITHUB_REPO=my-repo
+make deploy-oidc GH_ORG=my-org GITHUB_REPO=my-repo
 ```
 
 If the OIDC provider already exists in an account, add `CreateOIDCProvider=false`:
 
 ```bash
-make deploy-oidc-management GITHUB_ORG=my-org GITHUB_REPO=my-repo \
+make deploy-oidc-management GH_ORG=my-org GITHUB_REPO=my-repo \
   # then edit cf-github-oidc.yml or pass CreateOIDCProvider=false via --parameter-overrides
 ```
 
@@ -74,7 +74,7 @@ cp .env.example .env
 Override any variable on the command line:
 
 ```bash
-make deploy-oidc GITHUB_ORG=my-org GITHUB_REPO=my-repo
+make deploy-oidc GH_ORG=my-org GITHUB_REPO=my-repo
 make bootstrap REGION=us-east-1 PROFILE_MANAGEMENT=mgmt PROFILE_PRODUCTION=prod
 ```
 # aws-accounts-prerequisites

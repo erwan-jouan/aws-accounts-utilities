@@ -1,6 +1,6 @@
 PROFILE_MANAGEMENT ?= management
 PROFILE_PRODUCTION ?= production
-GITHUB_ORG         ?= erwan-jouan
+GH_ORG         ?= erwan-jouan
 GITHUB_REPO        ?= *
 OIDC_STACK_NAME    ?= GitHubOIDC
 
@@ -14,7 +14,7 @@ deploy-oidc-management:
 		--stack-name $(OIDC_STACK_NAME) \
 		--capabilities CAPABILITY_NAMED_IAM \
 		--parameter-overrides \
-			  GitHubOrg=$(GITHUB_ORG) \
+			  GitHubOrg=$(GH_ORG) \
 			  GitHubRepo=$(GITHUB_REPO) \
 			  RoleName=$${GH_ACTIONS_ROLE_NAME} \
 		--no-fail-on-empty-changeset \
@@ -28,7 +28,7 @@ deploy-oidc-production:
 		--stack-name $(OIDC_STACK_NAME) \
 		--capabilities CAPABILITY_NAMED_IAM \
 		--parameter-overrides \
-			GitHubOrg=$(GITHUB_ORG) \
+			GitHubOrg=$(GH_ORG) \
 			GitHubRepo=$(GITHUB_REPO) \
 			RoleName=$${GH_ACTIONS_ROLE_NAME} \
 		--no-fail-on-empty-changeset \
@@ -39,7 +39,7 @@ deploy-oidc: deploy-oidc-management deploy-oidc-production
 
 upload-secrets:
 	gh auth refresh -h github.com -s admin:org && \
-	gh secret set --app actions --env-file .env --org $(GITHUB_ORG) \
+	gh secret set --app actions --env-file .env --org $(GH_ORG) \
 		--visibility all
 
 cdk-common-synth:
