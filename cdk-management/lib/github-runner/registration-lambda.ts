@@ -143,6 +143,16 @@ export class RegistrationLambda extends Construct {
       resources: [`arn:aws:ec2:${stack.region}:${stack.account}:instance/*`],
     }));
 
+    // AWSServiceRoleForEC2Spot must exist before any Spot request; EC2 creates it
+    // automatically if the caller has this permission (one-time per account)
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['iam:CreateServiceLinkedRole'],
+      resources: ['arn:aws:iam::*:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot'],
+      conditions: {
+        StringLike: { 'iam:AWSServiceName': 'spot.amazonaws.com' },
+      },
+    }));
+
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ['iam:PassRole'],
       resources: [props.runnerRoleArn],
