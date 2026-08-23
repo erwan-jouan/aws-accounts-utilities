@@ -1,7 +1,10 @@
 import {
   EC2Client,
-  RunInstancesCommand,
+  CreateFleetCommand,
   DescribeInstanceStatusCommand,
+  SpotAllocationStrategy,
+  FleetType,
+  DefaultTargetCapacityType,
 } from '@aws-sdk/client-ec2';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 import {
@@ -17,9 +20,9 @@ const secretsManager = new SecretsManagerClient({});
 
 const GH_ORG = process.env.GH_ORG!;
 const SECRET_NAME = process.env.GH_TOKEN_SECRET_NAME!;
-const INSTANCE_PROFILE_NAME = process.env.RUNNER_INSTANCE_PROFILE_NAME!;
+const LAUNCH_TEMPLATE_ID = process.env.LAUNCH_TEMPLATE_ID!;
+const INSTANCE_TYPES = (process.env.RUNNER_INSTANCE_TYPES ?? 't3.medium,t3a.medium,t2.medium').split(',');
 const SUBNET_ID = process.env.RUNNER_SUBNET_ID;
-const INSTANCE_TYPE = process.env.RUNNER_INSTANCE_TYPE ?? 't3.medium';
 
 async function getLatestRunnerAmiId(): Promise<string> {
   const { Parameter } = await ssm.send(new GetParameterCommand({
@@ -30,71 +33,34 @@ async function getLatestRunnerAmiId(): Promise<string> {
   return amiId;
 }
 
-// Builds the user data script that runs on the EC2 instance at first boot.
-// GH_ORG and SECRET_NAME are substituted here (Lambda env vars).
-// INSTANCE_ID and REGION are resolved on the instance from the metadata service.
-function buildUserData(): string {
-  return `#!/bin/bash
-set -euxo pipefail
-
-# IMDSv2: obtain a session token first, then use it for all metadata reads
-IMDS_TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
-  -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
-INSTANCE_ID=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
-  http://169.254.169.254/latest/meta-data/instance-id)
-REGION=$(curl -s -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
-  http://169.254.169.254/latest/meta-data/placement/region)
-
-PAT=$(aws secretsmanager get-secret-value \
-  --secret-id '${SECRET_NAME}' \
-  --region "$REGION" \
-  --query 'SecretString' \
-  --output text \
-  | python3 -c "import sys,json; d=json.load(sys.stdin); print(next(iter(d.values())))")
-
-REG_TOKEN=$(curl -sf -X POST \
-  -H "Authorization: Bearer $PAT" \
-  -H "Accept: application/vnd.github+json" \
-  -H "X-GitHub-Api-Version: 2022-11-28" \
-  "https://api.github.com/orgs/${GH_ORG}/actions/runners/registration-token" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
-
-cd /opt/actions-runner
-sudo -u github-runner ./config.sh \
-  --url "https://github.com/${GH_ORG}" \
-  --token "$REG_TOKEN" \
-  --name "$INSTANCE_ID" \
-  --ephemeral \
-  --unattended \
-  --labels "$INSTANCE_ID"
-
-set +e
-sudo -u github-runner ./run.sh
-set -e
-
-aws ec2 terminate-instances --instance-ids "$INSTANCE_ID" --region "$REGION"
-`;
-}
-
-async function launchInstance(amiId: string): Promise<string> {
-  const { Instances = [] } = await ec2.send(new RunInstancesCommand({
-    ImageId: amiId,
-    InstanceType: INSTANCE_TYPE as any,
-    MinCount: 1,
-    MaxCount: 1,
-    IamInstanceProfile: { Name: INSTANCE_PROFILE_NAME },
-    UserData: Buffer.from(buildUserData()).toString('base64'),
-    ...(SUBNET_ID ? { SubnetId: SUBNET_ID } : {}),
-    TagSpecifications: [{
-      ResourceType: 'instance',
-      Tags: [
-        { Key: 'Name', Value: 'github-runner-ephemeral' },
-        { Key: 'github-runner', Value: 'true' },
-      ],
+async function launchFleet(amiId: string): Promise<string> {
+  const { Instances = [], Errors = [] } = await ec2.send(new CreateFleetCommand({
+    Type: FleetType.INSTANT,
+    TargetCapacitySpecification: {
+      TotalTargetCapacity: 1,
+      DefaultTargetCapacityType: DefaultTargetCapacityType.SPOT,
+    },
+    SpotOptions: {
+      AllocationStrategy: SpotAllocationStrategy.CAPACITY_OPTIMIZED,
+    },
+    LaunchTemplateConfigs: [{
+      LaunchTemplateSpecification: {
+        LaunchTemplateId: LAUNCH_TEMPLATE_ID,
+        Version: '$Latest',
+      },
+      Overrides: INSTANCE_TYPES.map(type => ({
+        InstanceType: type as any,
+        ImageId: amiId,
+        ...(SUBNET_ID ? { SubnetId: SUBNET_ID } : {}),
+      })),
     }],
   }));
-  const instanceId = Instances[0]?.InstanceId;
-  if (!instanceId) throw new Error('RunInstances returned no instance ID');
+
+  const instanceId = Instances[0]?.InstanceIds?.[0];
+  if (!instanceId) {
+    const errorMessages = Errors.map(e => `${e.ErrorCode}: ${e.ErrorMessage}`).join('; ');
+    throw new Error(`CreateFleet returned no instance. Fleet errors: ${errorMessages || 'none'}`);
+  }
   return instanceId;
 }
 
@@ -162,8 +128,8 @@ export async function handler(_event: unknown): Promise<{ instanceId: string; ru
   const amiId = await getLatestRunnerAmiId();
   console.log(`Using AMI: ${amiId}`);
 
-  const instanceId = await launchInstance(amiId);
-  console.log(`Launched instance: ${instanceId}`);
+  const instanceId = await launchFleet(amiId);
+  console.log(`Launched spot instance via fleet: ${instanceId}`);
 
   await waitForInstanceRunning(instanceId);
   console.log(`Instance running: ${instanceId}`);
