@@ -49,9 +49,9 @@ jobs:
         id: account
         run: |
           if [ "${{ inputs.account }}" = "management" ]; then
-            echo "account_id=${{ secrets.CICD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "account_id=${{ secrets.AWS_CICD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
           else
-            echo "account_id=${{ secrets.PROD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
+            echo "account_id=${{ secrets.AWS_PROD_ACCOUNT_ID }}" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: aws-actions/configure-aws-credentials@v4

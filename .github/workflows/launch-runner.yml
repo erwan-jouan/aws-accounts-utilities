@@ -19,7 +19,7 @@ jobs:
       id-token: write
       contents: read
     env:
-      AUTHORIZED_ACTOR: ${{ secrets.AUTHORIZED_ACTOR }}
+      AUTHORIZED_ACTOR: ${{ secrets.GH_AUTHORIZED_ACTOR }}
     steps:
       - name: Check authorized actor
         if: github.actor != env.AUTHORIZED_ACTOR
@@ -29,7 +29,7 @@ jobs:
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::${{ secrets.CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Resolve launcher function name
