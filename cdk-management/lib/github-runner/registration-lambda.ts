@@ -136,6 +136,13 @@ export class RegistrationLambda extends Construct {
       resources: [`arn:aws:ec2:${stack.region}:${stack.account}:fleet/*`],
     }));
 
+    // EC2 requires ec2:CreateTags on the caller whenever TagSpecifications is used,
+    // even when tags are declared inside a Launch Template
+    fn.addToRolePolicy(new iam.PolicyStatement({
+      actions: ['ec2:CreateTags'],
+      resources: [`arn:aws:ec2:${stack.region}:${stack.account}:instance/*`],
+    }));
+
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ['iam:PassRole'],
       resources: [props.runnerRoleArn],
