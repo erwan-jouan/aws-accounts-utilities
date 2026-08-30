@@ -40,9 +40,9 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
       - name: CDK bootstrap
         run: |
-          npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
+          npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ vars.AWS_REGION }}
       - name: Deploy cdk-management stack
         run: npx cdk deploy --require-approval never
