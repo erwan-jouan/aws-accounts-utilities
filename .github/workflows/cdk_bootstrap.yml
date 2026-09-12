@@ -83,6 +83,8 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_PROD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
           aws-region: ${{ secrets.AWS_REGION }}
       - name: CDK bootstrap (trust management account)
+        env:
+          PROD_ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
         run: |
           npx cdk bootstrap aws://${{ secrets.AWS_PROD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }} \
             --trust ${{ secrets.AWS_CICD_ACCOUNT_ID }} \
