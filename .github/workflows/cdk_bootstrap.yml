@@ -85,6 +85,8 @@ jobs:
       - name: CDK bootstrap (trust management account)
         env:
           PROD_ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
+          GH_ORG: ${{ secrets.GH_ORG }}
+          GH_TOKEN_SECRET_NAME: ${{ secrets.GH_TOKEN_SECRET_NAME }}
         run: |
           npx cdk bootstrap aws://${{ secrets.AWS_PROD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }} \
             --trust ${{ secrets.AWS_CICD_ACCOUNT_ID }} \
@@ -92,4 +94,6 @@ jobs:
       - name: Deploy cdk stack
         env:
           PROD_ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
+          GH_ORG: ${{ secrets.GH_ORG }}
+          GH_TOKEN_SECRET_NAME: ${{ secrets.GH_TOKEN_SECRET_NAME }}
         run: npx cdk deploy --all --require-approval never --app "npx ts-node --prefer-ts-exts bin/prod-account.ts"
