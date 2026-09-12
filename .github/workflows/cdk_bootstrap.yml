@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./cdk-common
+        working-directory: ./cdk
     permissions:
       id-token: write
       contents: read
@@ -33,7 +33,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: cdk-common/package-lock.json
+          cache-dependency-path: cdk/package-lock.json
       - run: npm ci
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -42,8 +42,12 @@ jobs:
       - name: CDK bootstrap
         run: |
           npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ vars.AWS_REGION }}
-      - name: Deploy cdk-common stack
-        run: npx cdk deploy --require-approval never
+      - name: Deploy cdk stack
+        env:
+          CICD_ACCOUNT_ID: ${{ secrets.AWS_CICD_ACCOUNT_ID }}
+          GH_ORG: ${{ vars.GH_ORG }}
+          GH_TOKEN_SECRET_NAME: ${{ vars.GH_TOKEN_SECRET_NAME }}
+        run: npx cdk deploy --all --require-approval never --app "npx ts-node --prefer-ts-exts bin/cicd-account.ts"
 
   bootstrap-production:
     environment: production
@@ -51,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./cdk-common
+        working-directory: ./cdk
     # Management must be bootstrapped first so the --trust ARN is valid
     needs: bootstrap-management
     permissions:
@@ -68,7 +72,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: cdk-common/package-lock.json
+          cache-dependency-path: cdk/package-lock.json
       - run: npm ci
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -79,5 +83,7 @@ jobs:
           npx cdk bootstrap aws://${{ secrets.AWS_PROD_ACCOUNT_ID }}/${{ vars.AWS_REGION }} \
             --trust ${{ secrets.AWS_CICD_ACCOUNT_ID }} \
             --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
-      - name: Deploy cdk-common stack
-        run: npx cdk deploy --require-approval never
+      - name: Deploy cdk stack
+        env:
+          PROD_ACCOUNT_ID: ${{ secrets.AWS_PROD_ACCOUNT_ID }}
+        run: npx cdk deploy --all --require-approval never --app "npx ts-node --prefer-ts-exts bin/prod-account.ts"

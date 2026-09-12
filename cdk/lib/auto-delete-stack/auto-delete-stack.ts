@@ -7,7 +7,7 @@ import * as lambdaNodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Construct } from 'constructs';
 import * as path from 'path';
 
-export class CdkCommonStack extends cdk.Stack {
+export class AutoDeleteStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
 
@@ -20,7 +20,7 @@ export class CdkCommonStack extends cdk.Stack {
     });
 
     const deletionExecutorFn = new lambdaNodejs.NodejsFunction(this, 'DeletionExecutorFn', {
-      entry: path.join(__dirname, '../lambda/deletion-executor.ts'),
+      entry: path.join(__dirname, './lambda/deletion-executor.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),
@@ -40,7 +40,7 @@ export class CdkCommonStack extends cdk.Stack {
     }));
 
     const deletionSchedulerFn = new lambdaNodejs.NodejsFunction(this, 'DeletionSchedulerFn', {
-      entry: path.join(__dirname, '../lambda/deletion-scheduler.ts'),
+      entry: path.join(__dirname, './lambda/deletion-scheduler.ts'),
       handler: 'handler',
       runtime: lambda.Runtime.NODEJS_22_X,
       timeout: cdk.Duration.seconds(30),

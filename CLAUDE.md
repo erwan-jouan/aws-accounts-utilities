@@ -66,9 +66,9 @@ node dist/index.js # requires active AWS credentials; writes JSON to stdout, pro
 
 ### cdk-common — auto-deletion scheduler
 
-`CdkCommonStack` (`cdk-common/lib/cdk-common-stack.ts`) creates a reusable deletion mechanism:
+`AutoDeleteStack` (`cdk-common/lib/auto-delete-stack.ts`) creates a reusable deletion mechanism:
 - DynamoDB table with TTL enabled and a DynamoDB Stream
-- **DeletionSchedulerFn** — a CloudFormation custom resource handler; `Create/Update` writes a TTL record, `Delete` removes it. Exported as `CdkCommonStack-DeletionSchedulerFnArn`.
+- **DeletionSchedulerFn** — a CloudFormation custom resource handler; `Create/Update` writes a TTL record, `Delete` removes it. Exported as `AutoDeleteStack-DeletionSchedulerFnArn`.
 - **DeletionExecutorFn** — triggered by the stream's `REMOVE` event (TTL expiry only, filtered by `userIdentity.type = Service`); calls `cloudformation:DeleteStack`.
 
 Consumer stacks use the exported Lambda ARN as a `ServiceToken` in a custom resource to schedule their own deletion.

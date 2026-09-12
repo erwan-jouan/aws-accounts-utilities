@@ -7,7 +7,7 @@
 test('SQS Queue Created', () => {
 //   const app = new cdk.App();
 //     // WHEN
-//   const stack = new CdkCommon.CdkCommonStack(app, 'MyTestStack');
+//   const stack = new CdkCommon.AutoDeleteStack(app, 'MyTestStack');
 //     // THEN
 //   const template = Template.fromStack(stack);
 

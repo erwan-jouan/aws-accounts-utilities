@@ -28,7 +28,7 @@
   "exclude": [
     "node_modules",
     "cdk.out",
-    "lambda",
+    "lib/auto-delete-stack/lambda",
     "lib/github-runner/lambda"
   ]
 }
