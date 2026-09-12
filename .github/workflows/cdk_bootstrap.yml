@@ -38,10 +38,10 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
       - name: CDK bootstrap
         run: |
-          npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ vars.AWS_REGION }}
+          npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
       - name: Deploy cdk stack
         env:
           CICD_ACCOUNT_ID: ${{ secrets.AWS_CICD_ACCOUNT_ID }}
@@ -77,10 +77,10 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_PROD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
       - name: CDK bootstrap (trust management account)
         run: |
-          npx cdk bootstrap aws://${{ secrets.AWS_PROD_ACCOUNT_ID }}/${{ vars.AWS_REGION }} \
+          npx cdk bootstrap aws://${{ secrets.AWS_PROD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }} \
             --trust ${{ secrets.AWS_CICD_ACCOUNT_ID }} \
             --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess
       - name: Deploy cdk stack
