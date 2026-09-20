@@ -30,7 +30,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
-          aws-region: ${{ vars.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Resolve launcher function name
         id: params
