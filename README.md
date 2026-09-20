@@ -35,12 +35,23 @@ make deploy-oidc-management GH_ORG=my-org GITHUB_REPO=my-repo \
 
 Go to **Settings → Secrets and variables → Actions** and add:
 
-| Secret | Description |
-|---|---|
-| `MANAGEMENT_ACCOUNT_ID` | AWS account ID of the management account |
-| `PRODUCTION_ACCOUNT_ID` | AWS account ID of the production account |
+```
+# AWS
+AWS_REGION=XXX
+AWS_PROD_ACCOUNT_ID=XXX
+AWS_CICD_ACCOUNT_ID=XXX
+AWS_ORGANIZATION_ID=XXX
+AWS_ORGANIZATION_UNIT_ID=XXX
+AWS_GITHUB_CONNECTION_ARN=XXX
+AWS_EKS_CONSOLE_ROLE_ARN=XXX
+# GitHub
+GH_ACTIONS_ROLE_NAME=XXX
+GH_AUTHORIZED_ACTOR=XXX
+GH_ORG=XXX
+GH_TOKEN_SECRET_NAME=XXX
+```
 
-### Step 3 — Run the workflow
+### Step 3 — Bootstrap both accounts
 
 Go to **Actions → Bootstrap AWS Accounts → Run workflow**.
 
@@ -50,6 +61,19 @@ The workflow authenticates to each account via OIDC (no stored credentials) and 
 |---|---|---|
 | `bootstrap-management` | — | `cdk bootstrap` on the management account |
 | `bootstrap-production` | `bootstrap-management` | `cdk bootstrap --trust MANAGEMENT_ACCOUNT_ID` on the production account |
+
+### Step 4 — Deploy the GitHub self-hosted runner (optional)
+
+Go to **Actions → Github runner on management account → Run workflow**.
+
+This deploys `github-runner-stack` from the `cdk/` project to the CICD account. It requires the following GitHub secrets in addition to those above:
+
+| Secret | Description |
+|---|---|
+| `GH_ORG` | GitHub organisation that owns the runner |
+| `GH_TOKEN_SECRET_NAME` | Name of the Secrets Manager secret holding the GitHub token used to register runners |
+
+The stack provisions an EC2 Image Builder pipeline to bake a runner AMI, an EC2 instance profile for runner instances, and a registration Lambda that auto-registers new instances as GitHub Actions runners.
 
 ---
 

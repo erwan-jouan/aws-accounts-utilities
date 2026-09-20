@@ -15,8 +15,7 @@ Bootstraps a two-account AWS setup (management/CICD + production) with:
 | Directory | Purpose |
 |---|---|
 | `github-oidc/` | CloudFormation template — one-time manual deploy via `make deploy-oidc` |
-| `cdk-common/` | CDK app deployed to both accounts by the `Bootstrap AWS Accounts` workflow |
-| `cdk-management/` | CDK app deployed to the management account by the `Github runner on management account` workflow |
+| `cdk/` | CDK app for the CICD account — `auto-delete-stack` (both accounts) and `github-runner-stack` (CICD account), deployed by the `Bootstrap AWS Accounts` and `Github runner on management account` workflows respectively |
 | `list-resources/` | Standalone TypeScript CLI — scans all services/regions and prints a hierarchical ARN tree to stdout |
 
 ## Environment variables
@@ -31,7 +30,7 @@ GH_ACTIONS_ROLE_NAME=
 AUTHORIZED_ACTOR=
 ```
 
-`cdk-management` additionally requires `GH_ORG` and `GH_TOKEN_SECRET_NAME` at synth time (the bin entry point throws if missing).
+`cdk/` additionally requires `GH_ORG` and `GH_TOKEN_SECRET_NAME` at synth time (the bin entry point throws if missing).
 
 ## Commands
 
@@ -46,13 +45,14 @@ make bootstrap-management
 make bootstrap-production
 ```
 
-Inside each CDK sub-project (`cdk-common/`, `cdk-management/`):
+Inside `cdk/`:
 
 ```bash
 npm run build      # tsc compile
 npm test           # jest
 npx cdk synth
-npx cdk deploy --require-approval never
+npx cdk deploy auto-delete-stack --require-approval never
+npx cdk deploy github-runner-stack --require-approval never
 ```
 
 Inside `list-resources/`:
@@ -64,18 +64,18 @@ node dist/index.js # requires active AWS credentials; writes JSON to stdout, pro
 
 ## Architecture notes
 
-### cdk-common — auto-deletion scheduler
+### cdk — auto-deletion scheduler
 
-`AutoDeleteStack` (`cdk-common/lib/auto-delete-stack.ts`) creates a reusable deletion mechanism:
+`AutoDeleteStack` (`cdk/lib/auto-delete-stack/auto-delete-stack.ts`) creates a reusable deletion mechanism:
 - DynamoDB table with TTL enabled and a DynamoDB Stream
 - **DeletionSchedulerFn** — a CloudFormation custom resource handler; `Create/Update` writes a TTL record, `Delete` removes it. Exported as `AutoDeleteStack-DeletionSchedulerFnArn`.
 - **DeletionExecutorFn** — triggered by the stream's `REMOVE` event (TTL expiry only, filtered by `userIdentity.type = Service`); calls `cloudformation:DeleteStack`.
 
 Consumer stacks use the exported Lambda ARN as a `ServiceToken` in a custom resource to schedule their own deletion.
 
-### cdk-management — GitHub self-hosted runner
+### cdk — GitHub self-hosted runner
 
-`GithubRunnerStack` (`cdk-management/lib/github-runner/GithubRunnerStack.ts`) composes:
+`GithubRunnerStack` (`cdk/lib/github-runner/GithubRunnerStack.ts`) composes:
 - EC2 Image Builder pipeline (component + recipe + infrastructure config + build instance profile) to bake a runner AMI
 - `RunnerEc2InstanceProfile` — attach to any EC2 instance that should act as a runner, plus tag `github-runner=true`
 - `RegistrationLambda` — EventBridge rule fires on every EC2 `running` state change; Lambda runs an SSM `AWS-RunShellScript` command on the instance to register it as a GitHub Actions runner using a token fetched from Secrets Manager
