@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./cdk-management
+        working-directory: ./cdk
     permissions:
       id-token: write
       contents: read
@@ -35,14 +35,18 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: cdk-management/package-lock.json
+          cache-dependency-path: cdk/package-lock.json
       - run: npm ci
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_CICD_ACCOUNT_ID }}:role/${{ secrets.GH_ACTIONS_ROLE_NAME }}
           aws-region: ${{ secrets.AWS_REGION }}
       - name: CDK bootstrap
+        env:
+          CICD_ACCOUNT_ID: ${{ secrets.AWS_CICD_ACCOUNT_ID }}
         run: |
           npx cdk bootstrap aws://${{ secrets.AWS_CICD_ACCOUNT_ID }}/${{ secrets.AWS_REGION }}
-      - name: Deploy cdk-management stack
-        run: npx cdk deploy --require-approval never
+      - name: Deploy github-runner-stack
+        env:
+          CICD_ACCOUNT_ID: ${{ secrets.AWS_CICD_ACCOUNT_ID }}
+        run: npx cdk deploy github-runner-stack --require-approval never
