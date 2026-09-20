@@ -34,7 +34,7 @@ export class RunnerAmiPublisher extends Construct {
 
     fn.addToRolePolicy(new iam.PolicyStatement({
       actions: ['ec2:CreateTags', 'ec2:DeregisterImage'],
-      resources: [`arn:aws:ec2:${stack.region}:${stack.account}:image/*`],
+      resources: [`arn:aws:ec2:${stack.region}::image/*`],
     }));
 
     fn.addToRolePolicy(new iam.PolicyStatement({
